@@ -91,12 +91,14 @@ impl SubsetCommand {
       });
     }
     fpb.println("work queued, let's go!");
+    drop(fpb);
     mpb.join_and_clear()?;
     pool.join();
     // send end-of-data sentinel
     tx.send(Value::Null)?;
     drop(tx);
 
+    eprintln!("waiting for writer to finish");
     // unwrap propagates panics, ? propagates IO errors
     let n = out_h.join().unwrap()?;
     Ok(n)

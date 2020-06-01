@@ -7,6 +7,7 @@ use std::io::{BufWriter, BufReader, Result};
 
 use flate2::bufread::MultiGzDecoder;
 use flate2::write::GzEncoder;
+use flate2::Compression;
 use indicatif::{ProgressBar, ProgressStyle};
 
 const PB_STYLE: &str = "{prefix:15}: {bar:25} {percent}% {bytes}/{total_bytes} (eta {eta})";
@@ -31,7 +32,7 @@ pub fn open_gzout_unbuffered<P: AsRef<Path>>(path: P) -> Result<Box<dyn Write>> 
   let output = OpenOptions::new().write(true).truncate(true).create(true).open(path)?;
   // buffer twice for efficiency
   let output = BufWriter::new(output);
-  let output = GzEncoder::new(output, Default::default());
+  let output = GzEncoder::new(output, Compression::best());
   Ok(Box::new(output))
 }
 
