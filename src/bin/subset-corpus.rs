@@ -12,7 +12,7 @@ use anyhow::{Result, anyhow};
 use crossbeam::channel::{unbounded, Sender, Receiver};
 use threadpool::ThreadPool;
 use serde_json::Value;
-use indicatif::{MultiProgress, ProgressBar};
+use indicatif::{MultiProgress, ProgressBar, ProgressStyle, ProgressDrawTarget};
 
 use fair_trec_tools::ai2::PaperMetadata;
 use fair_trec_tools::io::{open_gzout, open_gzin, make_progress};
@@ -58,14 +58,20 @@ impl SubsetCommand {
   fn subset(&self, targets: &Arc<HashSet<String>>) -> Result<usize> {
     let (tx, rx) = unbounded();
     let out_h = self.writer_thread(rx);
-    let mpb = MultiProgress::new();
+    let mpb = MultiProgress::with_draw_target(ProgressDrawTarget::stderr_with_hz(2));
     let pool = ThreadPool::new(4);
     eprintln!("scanning corpus in {:?}", &self.corpus_path);
     let corpus = OpenCorpus::create(&self.corpus_path);
     let files = corpus.get_files()?;
     eprintln!("found {} corpus files", files.len());
+    let fpb = ProgressBar::new(files.len() as u64);
+    let fpb = mpb.add(fpb);
+    fpb.set_prefix("files");
+    let stype = ProgressStyle::default_bar().template("{prefix:16}: {bar:25} {pos}/{len} (eta {eta})");
+    fpb.set_style(stype);
     for file in files {
       let t2 = tx.clone();
+      let fpb2 = fpb.clone();
       let pb = make_progress();
       let pb = mpb.add(pb);
       let tref = targets.clone();
@@ -77,12 +83,13 @@ impl SubsetCommand {
             std::process::exit(1);
           },
           Ok((nr, _ns)) => {
-            pb.println(format!("scanned {} records from {:?}", nr, &file));
+            fpb2.println(format!("scanned {} records from {:?}", nr, &file));
+            fpb2.inc(1);
           }
         }
       });
     }
-    eprintln!("work queued, let's go!");
+    fpb.println("work queued, let's go!");
     mpb.join()?;
     pool.join();
     // send end-of-data sentinel

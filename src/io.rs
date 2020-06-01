@@ -9,7 +9,7 @@ use flate2::bufread::MultiGzDecoder;
 use flate2::write::GzEncoder;
 use indicatif::{ProgressBar, ProgressStyle};
 
-const PB_STYLE: &str = "{prefix}: {bar} {percent}% {bytes}/{total_bytes} (eta {eta})";
+const PB_STYLE: &str = "{prefix:15}: {bar:25} {percent}% {bytes}/{total_bytes} (eta {eta})";
 
 /// Initialize a new default progress bar.
 pub fn make_progress() -> ProgressBar {
