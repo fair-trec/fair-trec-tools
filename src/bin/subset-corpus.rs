@@ -76,6 +76,7 @@ impl SubsetCommand {
       let pb = mpb.add(pb);
       let tref = targets.clone();
       pool.execute(move || {
+        pb.reset_elapsed();
         let res = subset_file(&file, t2, &tref, &pb);
         match res {
           Err(e) => {
@@ -90,7 +91,7 @@ impl SubsetCommand {
       });
     }
     fpb.println("work queued, let's go!");
-    mpb.join()?;
+    mpb.join_and_clear()?;
     pool.join();
     // send end-of-data sentinel
     tx.send(Value::Null)?;
