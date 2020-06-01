@@ -9,7 +9,7 @@ use std::thread;
 
 use structopt::StructOpt;
 use anyhow::{Result, anyhow};
-use crossbeam::channel::{unbounded, Sender, Receiver};
+use crossbeam::channel::{bounded, Sender, Receiver};
 use threadpool::ThreadPool;
 use serde_json::Value;
 use indicatif::{MultiProgress, ProgressBar, ProgressStyle, ProgressDrawTarget};
@@ -56,7 +56,7 @@ impl SubsetCommand {
 
   /// Perform the subset operation
   fn subset(&self, targets: &Arc<HashSet<String>>) -> Result<usize> {
-    let (tx, rx) = unbounded();
+    let (tx, rx) = bounded(1000);
     let out_h = self.writer_thread(rx);
     let mpb = MultiProgress::with_draw_target(ProgressDrawTarget::stderr_with_hz(2));
     let pool = ThreadPool::new(4);
