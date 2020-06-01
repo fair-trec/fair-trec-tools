@@ -36,3 +36,8 @@ To re-generate the OpenCorpus subet containing all files in the paper metadata f
 
     ./target/release/subset-corpus -M data/ai2-trec-release/paper_metadata.csv \
         -o data/corpus-subset-for-meta.gz data/corpus
+
+To generate a subset based on the candidate sets from query records, run:
+
+    ./target/release/subset-corpus -Q data/ai2-trec-release/query_candidates.csv \
+        -o data/corpus-subset-for-queries.gz data/corpus
