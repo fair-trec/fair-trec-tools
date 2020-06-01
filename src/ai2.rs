@@ -1,7 +1,8 @@
 /// This module contains logic for reading the AI2-released files.
-
+use std::io::prelude::*;
 use std::path::Path;
 use std::fs::File;
+use std::io::BufReader;
 
 use anyhow::Result;
 use serde::{Serialize, Deserialize};
@@ -36,5 +37,42 @@ impl PaperMetadata {
     }
 
     Ok(papers)
+  }
+}
+
+/// Query record from the AI2 JSON file.
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct QueryRecord {
+  pub query: String,
+  pub candidates: Vec<String>,
+  #[serde(default)]
+  pub clicks: Vec<Vec<QueryClick>>
+}
+
+/// A click record in a query record.
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct QueryClick {
+  click_position: i32,
+  click_paper_id: String
+}
+
+impl QueryRecord {
+  /// Read in paper metadata from a CSV file.
+  pub fn read_jsonl<P: AsRef<Path>>(path: P) -> Result<Vec<QueryRecord>> {
+    let mut queries = Vec::new();
+    let file = File::open(path)?;
+    let pb = make_progress();
+    pb.set_length(file.metadata()?.len());
+    pb.set_prefix("queries");
+    let pbr = pb.wrap_read(file);
+    let read = BufReader::new(pbr);
+
+    for line in read.lines() {
+      let line = line?;
+      let record: QueryRecord = serde_json::from_str(&line)?;
+      queries.push(record);
+    }
+
+    Ok(queries)
   }
 }

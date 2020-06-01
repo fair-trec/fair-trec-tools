@@ -14,7 +14,7 @@ use threadpool::ThreadPool;
 use serde_json::Value;
 use indicatif::{MultiProgress, ProgressBar, ProgressStyle, ProgressDrawTarget};
 
-use fair_trec_tools::ai2::PaperMetadata;
+use fair_trec_tools::ai2::{PaperMetadata, QueryRecord};
 use fair_trec_tools::io::{open_gzout, open_gzin, make_progress};
 use fair_trec_tools::corpus::OpenCorpus;
 
@@ -28,6 +28,10 @@ struct SubsetCommand {
   /// Path to the paper metadata as input.
   #[structopt(short="M", long="paper-meta")]
   paper_meta: Option<PathBuf>,
+
+  /// Path to the query data as input.
+  #[structopt(short="Q", long="queries")]
+  queries: Option<PathBuf>,
 
   /// Path to OpenCorpus download directory.
   corpus_path: PathBuf
@@ -49,6 +53,8 @@ impl SubsetCommand {
   fn get_target_docs(&self) -> Result<HashSet<String>> {
     if let Some(ref path) = &self.paper_meta {
       tgt_ids_from_metdata(path.as_ref())
+    } else if let Some(ref path) = &self.queries {
+      tgt_ids_from_queries(path.as_ref())
     } else {
       Err(anyhow!("no source of target documents provided."))
     }
@@ -76,7 +82,7 @@ impl SubsetCommand {
       let pb = mpb.add(pb);
       let tref = targets.clone();
       pool.execute(move || {
-        pb.reset_elapsed();
+        pb.reset();
         let res = subset_file(&file, t2, &tref, &pb);
         match res {
           Err(e) => {
@@ -134,6 +140,19 @@ fn tgt_ids_from_metdata(path: &Path) -> Result<HashSet<String>> {
   let mut ids = HashSet::with_capacity(papers.len());
   for paper in papers.iter() {
     ids.insert(paper.paper_sha.clone());
+  }
+  Ok(ids)
+}
+
+/// Read the list of desired paper IDs from metadata
+fn tgt_ids_from_queries(path: &Path) -> Result<HashSet<String>> {
+  eprintln!("reading target documents from {:?}", path);
+  let queries = QueryRecord::read_jsonl(path)?;
+  let mut ids = HashSet::new();
+  for query in queries.iter() {
+    for pid in &query.candidates {
+      ids.insert(pid.clone());
+    }
   }
   Ok(ids)
 }
