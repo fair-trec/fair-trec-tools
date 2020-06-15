@@ -14,7 +14,8 @@ use threadpool::ThreadPool;
 use serde_json::Value;
 use indicatif::{MultiProgress, ProgressBar, ProgressStyle, ProgressDrawTarget};
 
-use fair_trec_tools::ai2::{PaperMetadata, QueryRecord};
+use fair_trec_tools::ai2::PaperMetadata;
+use fair_trec_tools::queries::QueryRecord;
 use fair_trec_tools::io::{open_gzout, open_gzin, make_progress};
 use fair_trec_tools::corpus::OpenCorpus;
 
@@ -150,8 +151,8 @@ fn tgt_ids_from_queries(path: &Path) -> Result<HashSet<String>> {
   let queries = QueryRecord::read_jsonl(path)?;
   let mut ids = HashSet::new();
   for query in queries.iter() {
-    for pid in &query.candidates {
-      ids.insert(pid.clone());
+    for qdoc in &query.documents {
+      ids.insert(qdoc.doc_id.clone());
     }
   }
   Ok(ids)
