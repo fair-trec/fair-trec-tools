@@ -20,6 +20,14 @@ pub struct PaperMetadata {
   pub n_key_citations: Option<f32>
 }
 
+/// Paper-author link for metadata
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct PALink {
+  pub paper_sha: String,
+  pub corpus_author_id: Option<i64>,
+  pub position: usize
+}
+
 impl PaperMetadata {
   /// Read in paper metadata from a CSV file.
   pub fn read_csv<P: AsRef<Path>>(path: P) -> Result<Vec<PaperMetadata>> {

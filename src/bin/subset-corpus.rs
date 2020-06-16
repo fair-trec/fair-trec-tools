@@ -11,13 +11,14 @@ use structopt::StructOpt;
 use anyhow::{Result, anyhow};
 use crossbeam::channel::{bounded, Sender, Receiver};
 use threadpool::ThreadPool;
-use serde_json::Value;
+use serde_json::{Value, from_value};
 use indicatif::{MultiProgress, ProgressBar, ProgressStyle, ProgressDrawTarget};
+use regex::Regex;
 
 use fair_trec_tools::ai2::PaperMetadata;
 use fair_trec_tools::queries::QueryRecord;
 use fair_trec_tools::io::{open_gzout, open_gzin, make_progress};
-use fair_trec_tools::corpus::OpenCorpus;
+use fair_trec_tools::corpus::{OpenCorpus, Paper};
 
 #[derive(Debug, StructOpt)]
 #[structopt(name="subset-corpus")]
@@ -34,8 +35,22 @@ struct SubsetCommand {
   #[structopt(short="Q", long="queries")]
   queries: Option<PathBuf>,
 
+  /// Number of input files to process in parallel
+  #[structopt(short="j", long="jobs")]
+  n_jobs: Option<usize>,
+
   /// Path to OpenCorpus download directory.
   corpus_path: PathBuf
+}
+
+fn csv_path<P: AsRef<Path>>(path: P, key: &str) -> Result<PathBuf> {
+  let path = path.as_ref();
+  let mut copy = path.to_owned();
+  let stem = path.file_stem().and_then(|s| s.to_str()).ok_or(anyhow!("non-unicode file name"))?;
+  let re = Regex::new(r"\.jsonl?$")?;
+  let stem = re.replace(stem, "");
+  copy.set_file_name(format!("{}.{}.csv", stem, key));
+  Ok(copy)
 }
 
 fn main() -> Result<()> {
@@ -66,7 +81,7 @@ impl SubsetCommand {
     let (tx, rx) = bounded(1000);
     let out_h = self.writer_thread(rx);
     let mpb = MultiProgress::with_draw_target(ProgressDrawTarget::stderr_with_hz(2));
-    let pool = ThreadPool::new(4);
+    let pool = self.open_pool();
     eprintln!("scanning corpus in {:?}", &self.corpus_path);
     let corpus = OpenCorpus::create(&self.corpus_path);
     let files = corpus.get_files()?;
@@ -111,25 +126,25 @@ impl SubsetCommand {
     Ok(n)
   }
 
+  fn open_pool(&self) -> ThreadPool {
+    let n = self.n_jobs.unwrap_or(2);
+    eprintln!("using {} threads", n);
+    ThreadPool::new(n)
+  }
+
   /// Create a writer thread to write subset documents to disk.
   fn writer_thread(&self, rx: Receiver<Value>) -> thread::JoinHandle<Result<usize>> {
     // write output in a thread
     let outf = self.output.to_owned();
+
     thread::spawn(move || {
-      let mut n = 0;
-      let mut output = open_gzout(&outf)?;
-      let mut done = false;
-      while !done {
-        let msg = rx.recv()?;
-        match msg {
-          Value::Null => done = true,
-          m => {
-            n += 1;
-            write!(&mut output, "{}\n", m)?;
-          }
-        };
+      match write_worker(outf, rx) {
+        Ok(n) => Ok(n),
+        Err(e) => {
+          eprintln!("writer thread failed: {:?}", e);
+          Err(e)
+        }
       }
-      Ok(n)
     })
   }
 }
@@ -177,4 +192,30 @@ pub fn subset_file(src: &Path, out: Sender<Value>, targets: &HashSet<String>, pb
   }
 
   Ok((read, sent))
+}
+
+/// Worker procedure for doing the writing
+fn write_worker(outf: PathBuf, rx: Receiver<Value>) -> Result<usize> {
+  let mut n = 0;
+  let mut output = open_gzout(&outf)?;
+  let mut csv_out = csv::Writer::from_path(&csv_path(&outf, "papers")?)?;
+  let mut pal_out = csv::Writer::from_path(&csv_path(&outf, "paper_authors")?)?;
+  let mut done = false;
+  while !done {
+    let msg = rx.recv()?;
+    match msg {
+      Value::Null => done = true,
+      m => {
+        n += 1;
+        write!(&mut output, "{}\n", m)?;
+        let paper: Paper = from_value(m)?;
+        let meta = paper.meta();
+        csv_out.serialize(&meta)?;
+        for pal in paper.meta_authors() {
+          pal_out.serialize(&pal)?;
+        }
+      }
+    };
+  }
+  Ok(n)
 }
