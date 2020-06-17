@@ -35,6 +35,10 @@ struct SubsetCommand {
   #[structopt(short="Q", long="queries")]
   queries: Option<PathBuf>,
 
+  /// Path to query data in internal CSV format
+  #[structopt(long="query-csv")]
+  query_csv: Option<PathBuf>,
+
   /// Number of input files to process in parallel
   #[structopt(short="j", long="jobs")]
   n_jobs: Option<usize>,
@@ -70,7 +74,9 @@ impl SubsetCommand {
     if let Some(ref path) = &self.paper_meta {
       tgt_ids_from_metdata(path.as_ref())
     } else if let Some(ref path) = &self.queries {
-      tgt_ids_from_queries(path.as_ref())
+      tgt_ids_from_queries(path.as_ref(), false)
+    } else if let Some(ref path) = &self.query_csv {
+      tgt_ids_from_queries(path.as_ref(), true)
     } else {
       Err(anyhow!("no source of target documents provided."))
     }
@@ -161,9 +167,13 @@ fn tgt_ids_from_metdata(path: &Path) -> Result<HashSet<String>> {
 }
 
 /// Read the list of desired paper IDs from metadata
-fn tgt_ids_from_queries(path: &Path) -> Result<HashSet<String>> {
+fn tgt_ids_from_queries(path: &Path, csv: bool) -> Result<HashSet<String>> {
   eprintln!("reading target documents from {:?}", path);
-  let queries = QueryRecord::read_jsonl(path)?;
+  let queries = if csv {
+    QueryRecord::read_csv(path)?
+  } else {
+    QueryRecord::read_jsonl(path)?
+  };
   let mut ids = HashSet::new();
   for query in queries.iter() {
     for qdoc in &query.documents {

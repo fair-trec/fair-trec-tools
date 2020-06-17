@@ -39,5 +39,9 @@ To re-generate the OpenCorpus subet containing all files in the paper metadata f
 
 To generate a subset based on the candidate sets from query records, run:
 
-    ./target/release/subset-corpus -Q data/ai2-trec-release/query_candidates.csv \
-        -o data/corpus-subset-for-queries.gz data/corpus
+    ./target/release/subset-corpus -Q data/TREC-Competition-training-sample.json \
+        -o data/corpus-subset-for-queries.jsonl.gz data/corpus
+
+The subset command also produces metadata CSV alongside the compressed JSON output.
+
+The `--help` option works and will produce usage help.
