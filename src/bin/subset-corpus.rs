@@ -19,6 +19,7 @@ use fair_trec_tools::ai2::PaperMetadata;
 use fair_trec_tools::queries::QueryRecord;
 use fair_trec_tools::io::{open_gzout, open_gzin, make_progress};
 use fair_trec_tools::corpus::{OpenCorpus, Paper};
+use fair_trec_tools::author::{AuthTbl};
 
 #[derive(Debug, StructOpt)]
 #[structopt(name="subset-corpus")]
@@ -210,6 +211,8 @@ fn write_worker(outf: PathBuf, rx: Receiver<Value>) -> Result<usize> {
   let mut output = open_gzout(&outf)?;
   let mut csv_out = csv::Writer::from_path(&csv_path(&outf, "papers")?)?;
   let mut pal_out = csv::Writer::from_path(&csv_path(&outf, "paper_authors")?)?;
+  let mut table = AuthTbl::new();
+  let mut auth_set = HashSet::new();
   let mut done = false;
   while !done {
     let msg = rx.recv()?;
@@ -223,9 +226,30 @@ fn write_worker(outf: PathBuf, rx: Receiver<Value>) -> Result<usize> {
         csv_out.serialize(&meta)?;
         for pal in paper.meta_authors() {
           pal_out.serialize(&pal)?;
+          pal.corpus_author_id.map(|i| auth_set.insert(i));
         }
+        for auth in &paper.authors {
+          if auth.ids.len() > 1 {
+            auth_set.insert(auth.ids[0]);
+          }
+        }
+        table.record_paper(&paper);
       }
     };
+  }
+
+  eprintln!("writing authors");
+  let mut auth_out = csv::Writer::from_path(&csv_path(&outf, "authors")?)?;
+  for aid in auth_set {
+    let key = aid.to_string();
+    match table.lookup(&key) {
+      Some(auth) => {
+        auth_out.serialize(&auth)?;
+      },
+      None => {
+        eprintln!("unknown author {}", aid);
+      }
+    }
   }
   Ok(n)
 }
