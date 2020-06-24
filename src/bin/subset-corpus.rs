@@ -290,8 +290,7 @@ fn author_worker(outf: PathBuf, rx: Receiver<ATMsg>) -> Result<usize> {
   let mut auth_out = csv::Writer::from_path(&csv_path(&outf, "authors")?)?;
   let mut n = 0;
   for aid in auth_set {
-    let key = aid.to_string();
-    match table.lookup(&key) {
+    match table.lookup(aid) {
       Some(auth) => {
         auth_out.serialize(&auth)?;
         n += 1;

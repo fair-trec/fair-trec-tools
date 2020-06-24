@@ -21,7 +21,7 @@ impl Default for AuthAccum {
   }
 }
 
-pub struct AuthTbl (HashMap<String,AuthAccum>);
+pub struct AuthTbl (HashMap<i64,AuthAccum>);
 
 impl AuthTbl {
   pub fn new() -> AuthTbl {
@@ -29,8 +29,8 @@ impl AuthTbl {
   }
 
   pub fn record_author(&mut self, auth: &PaperAuthor, paper: &Paper) {
-    for ref id in &auth.ids {
-      let mut acc = self.0.entry(id.to_string()).or_default();
+    for id in &auth.ids {
+      let mut acc = self.0.entry(*id).or_default();
       *acc.names.entry(auth.name.clone()).or_default() += 1;
       let ncites = paper.inCitations.len();
       if ncites >= 10 {
@@ -46,15 +46,15 @@ impl AuthTbl {
     }
   }
 
-  pub fn lookup(&self, aid: &str) -> Option<AuthRec> {
-    self.0.get(aid).map(|acc| AuthRec::create(aid, &acc))
+  pub fn lookup(&self, aid: i64) -> Option<AuthRec> {
+    self.0.get(&aid).map(|acc| AuthRec::create(aid, &acc))
   }
 }
 
 /// Author record
 #[derive(Serialize, Deserialize)]
 pub struct AuthRec {
-  corpus_author_id: String,
+  corpus_author_id: i64,
   name: String,
   num_citations: usize,
   num_papers: usize,
@@ -64,7 +64,7 @@ pub struct AuthRec {
 }
 
 impl AuthRec {
-  pub fn create(id: &str, acc: &AuthAccum) -> AuthRec {
+  pub fn create(id: i64, acc: &AuthAccum) -> AuthRec {
     // pick most-used name
     let (_n, name) = acc.names.iter().fold((0, ""), |(cb, nb), (n, c)| {
       if c > &cb {
@@ -87,7 +87,7 @@ impl AuthRec {
     }
 
     AuthRec {
-      corpus_author_id: id.to_string(),
+      corpus_author_id: id,
       name: name.to_string(),
       num_citations: acc.cite_counts.iter().sum(),
       num_papers: acc.cite_counts.len(),
