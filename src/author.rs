@@ -59,7 +59,8 @@ pub struct AuthRec {
   num_citations: usize,
   num_papers: usize,
   i10: usize,
-  h_index: usize
+  h_index: usize,
+  h_class: &'static str
 }
 
 impl AuthRec {
@@ -91,7 +92,8 @@ impl AuthRec {
       num_citations: acc.cite_counts.iter().sum(),
       num_papers: acc.cite_counts.len(),
       i10: acc.i10,
-      h_index: h
+      h_index: h,
+      h_class: if h < 15 { "L" } else { "H" }
     }
   }
 }

@@ -48,6 +48,11 @@ struct SubsetCommand {
   corpus_path: PathBuf
 }
 
+enum ATMsg {
+  Paper (Value, bool),
+  Finish
+}
+
 fn csv_path<P: AsRef<Path>>(path: P, key: &str) -> Result<PathBuf> {
   let path = path.as_ref();
   let mut copy = path.to_owned();
@@ -86,7 +91,9 @@ impl SubsetCommand {
   /// Perform the subset operation
   fn subset(&self, targets: &Arc<HashSet<String>>) -> Result<usize> {
     let (tx, rx) = bounded(1000);
+    let (tx2, rx2) = bounded(1000);
     let out_h = self.writer_thread(rx);
+    let a_h = self.author_thread(rx2);
     let mpb = MultiProgress::with_draw_target(ProgressDrawTarget::stderr_with_hz(2));
     let pool = self.open_pool();
     eprintln!("scanning corpus in {:?}", &self.corpus_path);
@@ -99,14 +106,15 @@ impl SubsetCommand {
     let stype = ProgressStyle::default_bar().template("{prefix:16}: {bar:25} {pos}/{len} (eta {eta})");
     fpb.set_style(stype);
     for file in files {
-      let t2 = tx.clone();
+      let w_tx = tx.clone();
+      let a_tx = tx2.clone();
       let fpb2 = fpb.clone();
       let pb = make_progress();
       let pb = mpb.add(pb);
       let tref = targets.clone();
       pool.execute(move || {
         pb.reset();
-        let res = subset_file(&file, t2, &tref, &pb);
+        let res = subset_file(&file, w_tx, a_tx, &tref, &pb);
         match res {
           Err(e) => {
             eprintln!("error reading {:?}: {}", &file, e);
@@ -125,11 +133,14 @@ impl SubsetCommand {
     pool.join();
     // send end-of-data sentinel
     tx.send(Value::Null)?;
+    tx2.send(ATMsg::Finish)?;
     drop(tx);
+    drop(tx2);
 
     eprintln!("waiting for writer to finish");
     // unwrap propagates panics, ? propagates IO errors
     let n = out_h.join().unwrap()?;
+    a_h.join().unwrap()?;
     Ok(n)
   }
 
@@ -146,6 +157,22 @@ impl SubsetCommand {
 
     thread::spawn(move || {
       match write_worker(outf, rx) {
+        Ok(n) => Ok(n),
+        Err(e) => {
+          eprintln!("writer thread failed: {:?}", e);
+          Err(e)
+        }
+      }
+    })
+  }
+
+  /// Create a worker thread to process authors
+  fn author_thread(&self, rx: Receiver<ATMsg>) -> thread::JoinHandle<Result<usize>> {
+    // write output in a thread
+    let outf = self.output.to_owned();
+
+    thread::spawn(move || {
+      match author_worker(outf, rx) {
         Ok(n) => Ok(n),
         Err(e) => {
           eprintln!("writer thread failed: {:?}", e);
@@ -185,7 +212,7 @@ fn tgt_ids_from_queries(path: &Path, csv: bool) -> Result<HashSet<String>> {
 }
 
 /// Subset a file of corpus results into a recipient.
-pub fn subset_file(src: &Path, out: Sender<Value>, targets: &HashSet<String>, pb: &ProgressBar) -> Result<(usize, usize)> {
+fn subset_file(src: &Path, out: Sender<Value>, aout: Sender<ATMsg>, targets: &HashSet<String>, pb: &ProgressBar) -> Result<(usize, usize)> {
   let mut read = 0;
   let mut sent = 0;
   let src = open_gzin(src, pb)?;
@@ -194,12 +221,15 @@ pub fn subset_file(src: &Path, out: Sender<Value>, targets: &HashSet<String>, pb
     let ls = line?;
     let val: Value = serde_json::from_str(&ls)?;
     read += 1;
+    let mut keep = false;
     if let Some(Value::String(id)) = val.get("id") {
       if targets.contains(id) {
         sent += 1;
-        out.send(val)?;
+        keep = true;
+        out.send(val.clone())?;
       }
     }
+    aout.send(ATMsg::Paper(val, keep))?;
   }
 
   Ok((read, sent))
@@ -211,8 +241,6 @@ fn write_worker(outf: PathBuf, rx: Receiver<Value>) -> Result<usize> {
   let mut output = open_gzout(&outf)?;
   let mut csv_out = csv::Writer::from_path(&csv_path(&outf, "papers")?)?;
   let mut pal_out = csv::Writer::from_path(&csv_path(&outf, "paper_authors")?)?;
-  let mut table = AuthTbl::new();
-  let mut auth_set = HashSet::new();
   let mut done = false;
   while !done {
     let msg = rx.recv()?;
@@ -226,25 +254,47 @@ fn write_worker(outf: PathBuf, rx: Receiver<Value>) -> Result<usize> {
         csv_out.serialize(&meta)?;
         for pal in paper.meta_authors() {
           pal_out.serialize(&pal)?;
-          pal.corpus_author_id.map(|i| auth_set.insert(i));
         }
-        for auth in &paper.authors {
-          if auth.ids.len() > 1 {
-            auth_set.insert(auth.ids[0]);
+      }
+    };
+  }
+
+  Ok(n)
+}
+
+/// Worker procedure for handling authors
+fn author_worker(outf: PathBuf, rx: Receiver<ATMsg>) -> Result<usize> {
+  let mut table = AuthTbl::new();
+  let mut auth_set = HashSet::new();
+
+  let mut done = false;
+  while !done {
+    let msg = rx.recv()?;
+    match msg {
+      ATMsg::Finish => done = true,
+      ATMsg::Paper (m, keep) => {
+        let paper: Paper = from_value(m)?;
+        table.record_paper(&paper);
+        if keep {
+          for auth in &paper.authors {
+            if auth.ids.len() > 1 {
+              auth_set.insert(auth.ids[0]);
+            }
           }
         }
-        table.record_paper(&paper);
       }
     };
   }
 
   eprintln!("writing authors");
   let mut auth_out = csv::Writer::from_path(&csv_path(&outf, "authors")?)?;
+  let mut n = 0;
   for aid in auth_set {
     let key = aid.to_string();
     match table.lookup(&key) {
       Some(auth) => {
         auth_out.serialize(&auth)?;
+        n += 1;
       },
       None => {
         eprintln!("unknown author {}", aid);
