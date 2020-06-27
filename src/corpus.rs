@@ -17,6 +17,7 @@ pub struct OpenCorpus {
 
 /// Encapsulate a paper
 #[derive(Debug, Serialize, Deserialize, Clone)]
+#[allow(non_snake_case)]
 pub struct Paper {
   pub id: String,
   pub title: String,
