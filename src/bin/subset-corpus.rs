@@ -30,15 +30,15 @@ struct SubsetCommand {
 
   /// Path to the paper metadata as input.
   #[structopt(short="M", long="paper-meta")]
-  paper_meta: Option<PathBuf>,
+  paper_meta: Vec<PathBuf>,
 
   /// Path to the query data as input.
   #[structopt(short="Q", long="queries")]
-  queries: Option<PathBuf>,
+  queries: Vec<PathBuf>,
 
   /// Path to query data in internal CSV format
   #[structopt(long="query-csv")]
-  query_csv: Option<PathBuf>,
+  query_csv: Vec<PathBuf>,
 
   /// Number of input files to process in parallel
   #[structopt(short="j", long="jobs")]
@@ -46,6 +46,11 @@ struct SubsetCommand {
 
   /// Path to OpenCorpus download directory.
   corpus_path: PathBuf
+}
+
+/// Type for a set of document IDs.
+struct DocSet {
+  ids: HashSet<String>
 }
 
 enum ATMsg {
@@ -68,28 +73,34 @@ fn main() -> Result<()> {
   let targets = cmd.get_target_docs()?;
   let targets = Arc::new(targets);
 
-  eprintln!("looking for {} documents", targets.len());
+  eprintln!("looking for {} documents", targets.ids.len());
   let found = cmd.subset(&targets)?;
-  eprintln!("found {} of {} target documents", found, targets.len());
+  eprintln!("found {} of {} target documents", found, targets.ids.len());
   Ok(())
 }
 
 impl SubsetCommand {
   /// Get the target document IDs
-  fn get_target_docs(&self) -> Result<HashSet<String>> {
-    if let Some(ref path) = &self.paper_meta {
-      tgt_ids_from_metdata(path.as_ref())
-    } else if let Some(ref path) = &self.queries {
-      tgt_ids_from_queries(path.as_ref(), false)
-    } else if let Some(ref path) = &self.query_csv {
-      tgt_ids_from_queries(path.as_ref(), true)
-    } else {
+  fn get_target_docs(&self) -> Result<DocSet> {
+    let mut docs = DocSet::new();
+    for path in &self.paper_meta {
+      docs.load_metadata(path.as_ref())?;
+    }
+    for path in &self.queries {
+      docs.load_json_queries(path.as_ref())?;
+    }
+    for path in &self.query_csv {
+      docs.load_csv_queries(path.as_ref())?;
+    }
+    if docs.ids.is_empty() {
       Err(anyhow!("no source of target documents provided."))
+    } else {
+      Ok(docs)
     }
   }
 
   /// Perform the subset operation
-  fn subset(&self, targets: &Arc<HashSet<String>>) -> Result<usize> {
+  fn subset(&self, targets: &Arc<DocSet>) -> Result<usize> {
     let (tx, rx) = bounded(1000);
     let (tx2, rx2) = bounded(1000);
     let out_h = self.writer_thread(rx);
@@ -183,36 +194,54 @@ impl SubsetCommand {
   }
 }
 
-/// Read the list of desired paper IDs from metadata
-fn tgt_ids_from_metdata(path: &Path) -> Result<HashSet<String>> {
-  eprintln!("reading target documents from {:?}", path);
-  let papers = PaperMetadata::read_csv(path)?;
-  let mut ids = HashSet::with_capacity(papers.len());
-  for paper in papers.iter() {
-    ids.insert(paper.paper_sha.clone());
-  }
-  Ok(ids)
-}
-
-/// Read the list of desired paper IDs from metadata
-fn tgt_ids_from_queries(path: &Path, csv: bool) -> Result<HashSet<String>> {
-  eprintln!("reading target documents from {:?}", path);
-  let queries = if csv {
-    QueryRecord::read_csv(path)?
-  } else {
-    QueryRecord::read_jsonl(path)?
-  };
-  let mut ids = HashSet::new();
-  for query in queries.iter() {
-    for qdoc in &query.documents {
-      ids.insert(qdoc.doc_id.clone());
+impl DocSet {
+  fn new() -> DocSet {
+    DocSet {
+      ids: HashSet::new()
     }
   }
-  Ok(ids)
+
+  /// Read the list of desired paper IDs from metadata
+  fn load_metadata(&mut self, path: &Path) -> Result<usize> {
+    eprintln!("reading target documents from {:?}", path);
+    let papers = PaperMetadata::read_csv(path)?;
+    let init_size = self.ids.len();
+    for paper in papers.iter() {
+      self.ids.insert(paper.paper_sha.clone());
+    }
+    let added = self.ids.len() - init_size;
+    Ok(added)
+  }
+
+  /// Read the list of desired paper IDs from metadata JSON
+  fn load_json_queries(&mut self, path: &Path) -> Result<usize> {
+    eprintln!("reading target documents from {:?}", path);
+    let queries = QueryRecord::read_jsonl(path)?;
+    self.load_queries(queries)
+  }
+
+  /// Read the list of desired paper IDs from metadata CSV
+  fn load_csv_queries(&mut self, path: &Path) -> Result<usize> {
+    eprintln!("reading target documents from {:?}", path);
+    let queries = QueryRecord::read_csv(path)?;
+    self.load_queries(queries)
+  }
+
+  /// Process a list of documents into a metadata CSV
+  fn load_queries(&mut self, queries: Vec<QueryRecord>) -> Result<usize> {
+    let init_size = self.ids.len();
+    for query in queries.iter() {
+      for qdoc in &query.documents {
+        self.ids.insert(qdoc.doc_id.clone());
+      }
+    }
+    let added = self.ids.len() - init_size;
+    Ok(added)
+  }
 }
 
 /// Subset a file of corpus results into a recipient.
-fn subset_file(src: &Path, out: Sender<Value>, aout: Sender<ATMsg>, targets: &HashSet<String>, pb: &ProgressBar) -> Result<(usize, usize)> {
+fn subset_file(src: &Path, out: Sender<Value>, aout: Sender<ATMsg>, targets: &DocSet, pb: &ProgressBar) -> Result<(usize, usize)> {
   let mut read = 0;
   let mut sent = 0;
   let src = open_gzin(src, pb)?;
@@ -223,7 +252,7 @@ fn subset_file(src: &Path, out: Sender<Value>, aout: Sender<ATMsg>, targets: &Ha
     read += 1;
     let mut keep = false;
     if let Some(Value::String(id)) = val.get("id") {
-      if targets.contains(id) {
+      if targets.ids.contains(id) {
         sent += 1;
         keep = true;
         out.send(val.clone())?;
