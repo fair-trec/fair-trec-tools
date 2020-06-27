@@ -4,6 +4,8 @@ use serde::{Serialize,Deserialize};
 
 use crate::corpus::{Paper,PaperAuthor};
 
+const H_THRESHOLD: usize = 10;
+
 /// Author info accumulator
 pub struct AuthAccum {
   pub names: HashMap<String,usize>,
@@ -93,7 +95,7 @@ impl AuthRec {
       num_papers: acc.cite_counts.len(),
       i10: acc.i10,
       h_index: h,
-      h_class: if h < 15 { "L" } else { "H" }
+      h_class: if h < H_THRESHOLD { "L" } else { "H" }
     }
   }
 }
