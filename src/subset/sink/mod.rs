@@ -73,7 +73,7 @@ impl SubsetOutput {
     eprintln!("waiting for paper writer to finish");
     // unwrap propagates panics, ? propagates IO errors
     let n = self.paper_h.join().unwrap()?;
-    eprint!("waiting for author writer to finish");
+    eprintln!("waiting for author writer to finish");
     self.author_h.join().unwrap()?;
     Ok(n)
   }

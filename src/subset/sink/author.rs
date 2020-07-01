@@ -41,14 +41,14 @@ fn author_worker(outf: PathBuf, rx: Receiver<AuthorMsg>) -> Result<usize> {
     table.record_paper(&rec.paper);
     if rec.keep {
       for auth in &rec.paper.authors {
-        if auth.ids.len() > 1 {
-          auth_set.insert(auth.ids[0]);
+        if let Some(id) = auth.id() {
+          auth_set.insert(id);
         }
       }
     }
   }
 
-  eprintln!("writing authors");
+  eprintln!("writing {} authors", auth_set.len());
   let mut auth_out = csv::Writer::from_path(&csv_path(&outf, "authors")?)?;
   let mut n = 0;
   for aid in auth_set {

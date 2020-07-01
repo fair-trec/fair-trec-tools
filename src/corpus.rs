@@ -86,11 +86,7 @@ impl Paper {
     let mut authors = Vec::with_capacity(self.authors.len());
     for i in 0..self.authors.len() {
       let a = &self.authors[i];
-      let aid = if a.ids.len() > 0 {
-        Some(a.ids[0])
-      } else {
-        None
-      };
+      let aid = a.id();
       authors.push(ai2::PALink {
         paper_sha: self.id.clone(),
         corpus_author_id: aid,
@@ -98,6 +94,16 @@ impl Paper {
       });
     }
     authors
+  }
+}
+
+impl PaperAuthor {
+  pub fn id(&self) -> Option<i64> {
+    if self.ids.len() > 0 {
+      Some(self.ids[0])
+    } else {
+      None
+    }
   }
 }
 
