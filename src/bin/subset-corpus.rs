@@ -11,7 +11,6 @@ use structopt::StructOpt;
 use anyhow::{Result, anyhow};
 use crossbeam::channel::{bounded, Sender, Receiver};
 use threadpool::ThreadPool;
-use serde_json::{Value, from_value};
 use indicatif::{MultiProgress, ProgressBar, ProgressStyle, ProgressDrawTarget};
 use regex::Regex;
 
@@ -53,10 +52,14 @@ struct DocSet {
   ids: HashSet<String>
 }
 
-enum ATMsg {
-  Paper (Value, bool),
+#[derive(Debug, Clone)]
+enum Msg<T> {
+  Paper (T),
   Finish
 }
+
+type PTMsg = Msg<(Arc<Paper>, String)>;
+type ATMsg = Msg<(Arc<Paper>, bool)>;
 
 fn csv_path<P: AsRef<Path>>(path: P, key: &str) -> Result<PathBuf> {
   let path = path.as_ref();
@@ -143,14 +146,15 @@ impl SubsetCommand {
     mpb.join_and_clear()?;
     pool.join();
     // send end-of-data sentinel
-    tx.send(Value::Null)?;
-    tx2.send(ATMsg::Finish)?;
+    tx.send(Msg::Finish)?;
+    tx2.send(Msg::Finish)?;
     drop(tx);
     drop(tx2);
 
-    eprintln!("waiting for writer to finish");
+    eprintln!("waiting for paper writer to finish");
     // unwrap propagates panics, ? propagates IO errors
     let n = out_h.join().unwrap()?;
+    eprint!("waiting for author writer to finish");
     a_h.join().unwrap()?;
     Ok(n)
   }
@@ -162,7 +166,7 @@ impl SubsetCommand {
   }
 
   /// Create a writer thread to write subset documents to disk.
-  fn writer_thread(&self, rx: Receiver<Value>) -> thread::JoinHandle<Result<usize>> {
+  fn writer_thread(&self, rx: Receiver<PTMsg>) -> thread::JoinHandle<Result<usize>> {
     // write output in a thread
     let outf = self.output.to_owned();
 
@@ -241,31 +245,30 @@ impl DocSet {
 }
 
 /// Subset a file of corpus results into a recipient.
-fn subset_file(src: &Path, out: Sender<Value>, aout: Sender<ATMsg>, targets: &DocSet, pb: &ProgressBar) -> Result<(usize, usize)> {
+fn subset_file(src: &Path, out: Sender<PTMsg>, aout: Sender<ATMsg>, targets: &DocSet, pb: &ProgressBar) -> Result<(usize, usize)> {
   let mut read = 0;
   let mut sent = 0;
   let src = open_gzin(src, pb)?;
 
   for line in src.lines() {
     let ls = line?;
-    let val: Value = serde_json::from_str(&ls)?;
+    let paper: Paper = serde_json::from_str(&ls)?;
+    let paper = Arc::new(paper);
     read += 1;
     let mut keep = false;
-    if let Some(Value::String(id)) = val.get("id") {
-      if targets.ids.contains(id) {
-        sent += 1;
-        keep = true;
-        out.send(val.clone())?;
-      }
+    if targets.ids.contains(&paper.id) {
+      sent += 1;
+      keep = true;
+      out.send(Msg::Paper((paper.clone(), ls)))?;
     }
-    aout.send(ATMsg::Paper(val, keep))?;
+    aout.send(Msg::Paper((paper, keep)))?;
   }
 
   Ok((read, sent))
 }
 
 /// Worker procedure for doing the writing
-fn write_worker(outf: PathBuf, rx: Receiver<Value>) -> Result<usize> {
+fn write_worker(outf: PathBuf, rx: Receiver<PTMsg>) -> Result<usize> {
   let mut n = 0;
   let mut output = open_gzout(&outf)?;
   let mut csv_out = csv::Writer::from_path(&csv_path(&outf, "papers")?)?;
@@ -274,11 +277,10 @@ fn write_worker(outf: PathBuf, rx: Receiver<Value>) -> Result<usize> {
   while !done {
     let msg = rx.recv()?;
     match msg {
-      Value::Null => done = true,
-      m => {
+      Msg::Finish => done = true,
+      Msg::Paper((paper, m)) => {
         n += 1;
         write!(&mut output, "{}\n", m)?;
-        let paper: Paper = from_value(m)?;
         let meta = paper.meta();
         csv_out.serialize(&meta)?;
         for pal in paper.meta_authors() {
@@ -300,9 +302,8 @@ fn author_worker(outf: PathBuf, rx: Receiver<ATMsg>) -> Result<usize> {
   while !done {
     let msg = rx.recv()?;
     match msg {
-      ATMsg::Finish => done = true,
-      ATMsg::Paper (m, keep) => {
-        let paper: Paper = from_value(m)?;
+      Msg::Finish => done = true,
+      Msg::Paper((paper, keep)) => {
         table.record_paper(&paper);
         if keep {
           for auth in &paper.authors {
@@ -329,5 +330,6 @@ fn author_worker(outf: PathBuf, rx: Receiver<ATMsg>) -> Result<usize> {
       }
     }
   }
+  eprintln!("wrote {} authors", n);
   Ok(n)
 }

@@ -94,7 +94,7 @@ impl Paper {
       authors.push(ai2::PALink {
         paper_sha: self.id.clone(),
         corpus_author_id: aid,
-        position: i
+        position: i + 1
       });
     }
     authors
